@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HappY VALENTINE</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; }
+        #video-container { 
+            position: absolute; bottom: 15px; right: 15px; width: 140px; 
+            transform: scaleX(-1); opacity: 0.9; border: 1px solid #ff0077; border-radius: 10px; overflow: hidden; z-index: 10;
+        }
+        video { width: 100%; display: block; }
+        #ui { position: absolute; top: 30px; left: 30px; color: #ff0077; z-index: 10; pointer-events: none; }
+        h1 { margin: 0; font-size: 24px; text-transform: uppercase; letter-spacing: 2px; text-shadow: 0 0 10px #ff0077; }
+        #status { font-size: 14px; margin-top: 15px; color: #00ffcc; font-weight: bold; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="ui">
+        <h1>HAPPY VALENTINE <3</h1>
+        <p id="status">Loading...</p>
+    </div>
+
+    <div id="video-container"><video class="input_video"></video></div>
+
+<script>
+    // --- 1. SETUP CORE ---
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.z = 100;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.toneMapping = THREE.LinearToneMapping;
+    renderer.toneMappingExposure = 1.0; 
+    document.body.appendChild(renderer.domElement);
+
+    // --- 2. SELECTIVE BLOOM SETUP ---
+    const ENTIRE_SCENE = 0, BLOOM_SCENE = 1;
+    const bloomLayer = new THREE.Layers();
+    bloomLayer.set( BLOOM_SCENE );
+
+    const renderScene = new THREE.RenderPass(scene, camera);
+    const bloomComposer = new THREE.EffectComposer(renderer);
+    bloomComposer.renderToScreen = false;
+    bloomComposer.addPass(renderScene);
+    const bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.1);
+    bloomComposer.addPass(bloomPass);
+
+    const mixPass = new THREE.ShaderPass(
+        new THREE.ShaderMaterial({
+            uniforms: { baseTexture: { value: null }, tBloom: { value: bloomComposer.renderTarget2.texture } },
+            vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 ); }`,
+            fragmentShader: `uniform sampler2D baseTexture; uniform sampler2D tBloom; varying vec2 vUv; void main() { gl_FragColor = ( texture2D( baseTexture, vUv ) + vec4( 1.0 ) * texture2D( tBloom, vUv ) ); }`,
+        }), 'baseTexture'
+    );
+    const finalComposer = new THREE.EffectComposer(renderer);
+    finalComposer.addPass(renderScene);
+    finalComposer.addPass(mixPass);
+
+    const mainGroup = new THREE.Group();
+    scene.add(mainGroup);
+
+    // --- 3. TEXTURES ---
+    const loader = new THREE.TextureLoader();
+    loader.setCrossOrigin('anonymous');
+
+    const createSphereTexture = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 64; canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+        grad.addColorStop(0, 'white'); grad.addColorStop(0.3, '#ff6496'); grad.addColorStop(1, 'black');
+        ctx.fillStyle = grad; ctx.fillRect(0, 0, 64, 64);
+        return new THREE.CanvasTexture(canvas);
+    };
+
+    const createHeartTexture = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 128; canvas.height = 128;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = 'white';
+        ctx.beginPath();
+        ctx.moveTo(64, 90); ctx.bezierCurveTo(64, 84, 30, 60, 30, 44); ctx.bezierCurveTo(30, 24, 60, 24, 64, 40);
+        ctx.bezierCurveTo(68, 24, 98, 24, 98, 44); ctx.bezierCurveTo(98, 60, 64, 84, 64, 90);
+        ctx.fill();
+        return new THREE.CanvasTexture(canvas);
+    };
+
+    const sphereTex = createSphereTexture();
+    const heartTex = createHeartTexture();
+
+    // --- 4. HẠT CAM & HỒNG ---
+    const sphereRadius = 40;
+    const fireCount = 4000;
+    const firePos = new Float32Array(fireCount * 3);
+    const fireVels = new Float32Array(fireCount * 3);
+    for (let i = 0; i < fireCount; i++) {
+        const r = 12 + Math.random() * (sphereRadius - 12);
+        const phi = Math.acos(2 * Math.random() - 1);
+        const theta = Math.random() * Math.PI * 2;
+        firePos[i*3] = r * Math.sin(phi) * Math.cos(theta);
+        firePos[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
+        firePos[i*3+2] = r * Math.cos(phi);
+        fireVels[i*3] = (Math.random() - 0.5) * 0.04;
+        fireVels[i*3+1] = (Math.random() - 0.5) * 0.04;
+        fireVels[i*3+2] = (Math.random() - 0.5) * 0.04;
+    }
+    const firePoints = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(firePos, 3)), new THREE.PointsMaterial({ size: 1.0, map: sphereTex, transparent: true, blending: THREE.AdditiveBlending, color: 0xdd1717 }));
+    firePoints.layers.enable(BLOOM_SCENE); mainGroup.add(firePoints);
+
+    const pinkCount = 5000;
+    const pinkPos = new Float32Array(pinkCount * 3);
+    const pinkVels = [];
+    for (let i = 0; i < pinkCount; i++) {
+        pinkPos[i*3] = (Math.random() - 0.5) * 400; pinkPos[i*3+1] = (Math.random() - 0.5) * 400; pinkPos[i*3+2] = (Math.random() - 0.5) * 300;
+        pinkVels.push({ x: (Math.random()-0.5)*0.1, y: (Math.random()-0.5)*1.5, z: (Math.random()-0.5)*0.1 });
+    }
+    const pinkHearts = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(pinkPos, 3)), new THREE.PointsMaterial({ size: 2.5, map: heartTex, transparent: true, opacity: 0.4, color: 0xff66bb }));
+    pinkHearts.layers.enable(BLOOM_SCENE); scene.add(pinkHearts);
+
+    // --- 5. HÀM TẠO ẢNH ---
+    const imageElements = [];
+    function createPhoto(url, r, phi, theta, glowColor) {
+        const tex = loader.load(url);
+        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(12, 16), new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }));
+        mesh.position.setFromSphericalCoords(r, phi, theta);
+        mesh.lookAt(0, 0, 0); mesh.rotateY(Math.PI);
+        mainGroup.add(mesh);
+
+        const border = new THREE.Mesh(new THREE.PlaneGeometry(13, 17), new THREE.MeshBasicMaterial({ color: glowColor, side: THREE.DoubleSide, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending }));
+        border.position.copy(mesh.position); border.rotation.copy(mesh.rotation); border.translateZ(-0.5);
+        border.layers.enable(BLOOM_SCENE); mainGroup.add(border);
+        imageElements.push(mesh);
+        return mesh;
+    }
+
+    // --- KHÔI PHỤC ĐẦY ĐỦ LINK ẢNH ---
+   // --- KHÔI PHỤC ĐẦY ĐỦ LINK ẢNH & PHÂN BỔ CÁCH ĐỀU ---
+    const spacePhotoUrls = [
+        'image/843fd396-da37-47d6-994f-57405b81ec0e.jpg', 'image/Messenger_creation_367DFD3E-A4B5-4E97-A548-936FA72F07BF.jpeg',
+        'image/IMG_20250323_185642_HDR.jpg', 'image/IMG_20250323_143235_HDR.jpg', 'image/33b97d5302ecbfb2e6fd1.jpg',
+        'image/IMG_1748359762713_1748366831449~2.jpg', 'image/IMG_20250708_211531_HDR.jpg', 'image/IMG_20250625_154209_HDR.jpg',
+        'image/IMG_20250818_073805.jpg', 'image/IMG_20250528_002754~2.jpg'
+    ];
+
+   // --- KHÔI PHỤC ĐẦY ĐỦ LINK ẢNH & PHÂN BỔ CÁCH ĐỀU ---
+    // --- ĐIỀU CHỈNH RADIUS RỘNG RA VÀ TẬP TRUNG XÍCH ĐẠO ---
+    const totalOuterPhotos = spacePhotoUrls.length;
+    spacePhotoUrls.forEach((url, i) => {
+        // Tăng con số này để vòng ảnh rộng ra (Ví dụ: 70 hoặc 80)
+        const r_wide = sphereRadius + 30; 
+
+        const offset = 2 / totalOuterPhotos;
+        const increment = Math.PI * (3 - Math.sqrt(5)); 
+        
+        let y = ((i * offset) - 1) + (offset / 2);
+        
+        // Giữ nguyên giới hạn xéo (né đỉnh và đáy) như bạn muốn
+        y = Math.max(-0.6, Math.min(0.6, y)); 
+
+        const phi = Math.acos(y); 
+        const theta = i * increment;
+
+        // Biến tấu nhẹ bán kính để các ảnh không nằm trên một đường tròn hoàn hảo
+        const variedR = r_wide + (Math.random() - 0.5) * 15;
+        
+        createPhoto(url, variedR, phi, theta, 0xffffff);
+    });
+    const coreImgs = [
+        'image/IMG_1748262320755_1748262350732~2.jpg', 'image/IMG_1748262320795_1748262366744~2.jpg',
+        'image/IMG_20250704_194046~2.jpg', 'image/IMG_1748359766595_1748366840465~2.jpg',
+        'image/89fb5569-8e1f-458b-ba13-2b1544637538.jpeg', 'image/IqWvGpEBlXIK.jpg'
+    ];
+    const driftSystems = [];
+    coreImgs.forEach((url, i) => {
+        const mesh = createPhoto(url, sphereRadius - 2, Math.PI / 2, (i/coreImgs.length)*Math.PI*2, 0xff0055);
+        const count = 10; const pos = new Float32Array(count * 3); const vels = [];
+        for (let j=0; j<count; j++) {
+            pos[j*3]=(Math.random()-0.5)*15; pos[j*3+1]=(Math.random()-0.5)*20; pos[j*3+2]=(Math.random()-0.5)*5;
+            vels.push({ x: (Math.random()-0.5)*0.06, y: (Math.random()-0.5)*0.06, z: (Math.random()-0.5)*0.06 });
+        }
+        const pts = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(pos, 3)), new THREE.PointsMaterial({ size: 2.8, map: heartTex, transparent: true, color: 0xff0055 }));
+        pts.layers.enable(BLOOM_SCENE); mesh.add(pts);
+        driftSystems.push({ points: pts, vels: vels });
+    });
+
+    // --- AI HANDS ---
+    let targetZoom = 100, targetRotY = 0, targetRotX = 0, isHandPresent = false;
+    const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 1 });
+    hands.onResults(res => {
+        if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
+            document.getElementById('status').innerText = ""; isHandPresent = true;
+            const h = res.multiHandLandmarks[0];
+            const d = Math.sqrt(Math.pow(h[8].x - h[4].x, 2) + Math.pow(h[8].y - h[4].y, 2));
+            targetZoom = THREE.MathUtils.mapLinear(d, 0.05, 0.35, 160, 60);
+            targetRotY = (h[9].x - 0.5) * 2.0; targetRotX = -(h[9].y - 0.5) * 2.0;
+        } else { isHandPresent = false; }
+    });
+    const videoElement = document.querySelector('.input_video');
+    new Camera(videoElement, { onFrame: async () => await hands.send({image: videoElement}), width: 640, height: 480 }).start();
+
+    // --- ANIMATION ---
+    const darkMat = new THREE.MeshBasicMaterial({ color: 'black' });
+    const materials = {};
+    function darken(obj) { if (obj.isMesh && !bloomLayer.test(obj.layers)) { materials[obj.uuid] = obj.material; obj.material = darkMat; } }
+    function restore(obj) { if (materials[obj.uuid]) { obj.material = materials[obj.uuid]; delete materials[obj.uuid]; } }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        if (isHandPresent) {
+            mainGroup.rotation.y = THREE.MathUtils.lerp(mainGroup.rotation.y, mainGroup.rotation.y + targetRotY, 0.05);
+            mainGroup.rotation.x = THREE.MathUtils.lerp(mainGroup.rotation.x, targetRotX, 0.05);
+            camera.position.z = THREE.MathUtils.lerp(camera.position.z, targetZoom, 0.06);
+        } else {
+            mainGroup.rotation.y += 0.002;
+            mainGroup.rotation.x = THREE.MathUtils.lerp(mainGroup.rotation.x, 0, 0.01);
+            camera.position.z = THREE.MathUtils.lerp(camera.position.z, 100, 0.01);
+        }
+        // Update particles
+        const p = pinkHearts.geometry.attributes.position.array;
+        for(let i=0; i<pinkCount; i++) { p[i*3+1]+=pinkVels[i].y; if(p[i*3+1]>200) p[i*3+1]=-200; }
+        pinkHearts.geometry.attributes.position.needsUpdate = true;
+        
+        scene.traverse(darken); bloomComposer.render(); scene.traverse(restore); finalComposer.render();
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+</script>
+</body>
+</html>
